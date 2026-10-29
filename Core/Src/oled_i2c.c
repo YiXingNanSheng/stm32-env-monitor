@@ -1,0 +1,194 @@
+/**
+  ******************************************************************************
+  * @file    oled_i2c.c
+  * @brief   SSD1306 128x64 OLED 驱动（I2C 地址 0x78，总线见 soft_i2c.h）
+  ******************************************************************************
+  */
+
+#include "oled_i2c.h"
+#include "soft_i2c.h"
+#include <string.h>
+
+/* ============================ 私有：字库 ============================ */
+/* 字符顺序必须与 Font[] 一一对应 */
+static const char FontChars[] =
+  " :.%-0123456789ACDEFGHILMNORSTUWadeghilmnoprstuvxy";
+
+static const uint8_t Font[][5] = {
+  {0x00,0x00,0x00,0x00,0x00},  /* ' ' */
+  {0x00,0x36,0x36,0x00,0x00},  /* ':' */
+  {0x00,0x60,0x60,0x00,0x00},  /* '.' */
+  {0x62,0x64,0x08,0x13,0x23},  /* '%' */
+  {0x08,0x08,0x08,0x08,0x08},  /* '-' */
+  {0x3E,0x51,0x49,0x45,0x3E},  /* 0 */
+  {0x00,0x42,0x7F,0x40,0x00},  /* 1 */
+  {0x42,0x61,0x51,0x49,0x46},  /* 2 */
+  {0x21,0x41,0x45,0x4B,0x31},  /* 3 */
+  {0x18,0x14,0x12,0x7F,0x10},  /* 4 */
+  {0x27,0x45,0x45,0x45,0x39},  /* 5 */
+  {0x3C,0x4A,0x49,0x49,0x30},  /* 6 */
+  {0x01,0x71,0x09,0x05,0x03},  /* 7 */
+  {0x36,0x49,0x49,0x49,0x36},  /* 8 */
+  {0x06,0x49,0x49,0x29,0x1E},  /* 9 */
+  {0x7E,0x11,0x11,0x11,0x7E},  /* A */
+  {0x3E,0x41,0x41,0x41,0x22},  /* C */
+  {0x7F,0x41,0x41,0x22,0x1C},  /* D */
+  {0x7F,0x49,0x49,0x49,0x41},  /* E */
+  {0x7F,0x09,0x09,0x09,0x01},  /* F */
+  {0x3E,0x41,0x49,0x49,0x7A},  /* G */
+  {0x7F,0x08,0x08,0x08,0x7F},  /* H */
+  {0x00,0x41,0x7F,0x41,0x00},  /* I */
+  {0x7F,0x40,0x40,0x40,0x40},  /* L */
+  {0x7F,0x02,0x0C,0x02,0x7F},  /* M */
+  {0x7F,0x04,0x08,0x10,0x7F},  /* N */
+  {0x3E,0x41,0x41,0x41,0x3E},  /* O */
+  {0x7F,0x09,0x19,0x29,0x46},  /* R */
+  {0x46,0x49,0x49,0x49,0x31},  /* S */
+  {0x01,0x01,0x7F,0x01,0x01},  /* T */
+  {0x3F,0x40,0x40,0x40,0x3F},  /* U */
+  {0x3F,0x40,0x38,0x40,0x3F},  /* W */
+  {0x20,0x54,0x54,0x54,0x78},  /* a */
+  {0x38,0x44,0x44,0x48,0x7F},  /* d */
+  {0x38,0x54,0x54,0x54,0x18},  /* e */
+  {0x0C,0x52,0x52,0x52,0x3E},  /* g */
+  {0x7F,0x08,0x04,0x04,0x78},  /* h */
+  {0x00,0x44,0x7D,0x40,0x00},  /* i */
+  {0x00,0x41,0x7F,0x40,0x00},  /* l */
+  {0x7C,0x04,0x18,0x04,0x78},  /* m */
+  {0x7C,0x08,0x04,0x04,0x78},  /* n */
+  {0x38,0x44,0x44,0x44,0x38},  /* o */
+  {0x7C,0x14,0x14,0x14,0x08},  /* p */
+  {0x7C,0x08,0x04,0x04,0x08},  /* r */
+  {0x48,0x54,0x54,0x54,0x20},  /* s */
+  {0x04,0x3F,0x44,0x40,0x20},  /* t */
+  {0x3C,0x40,0x40,0x20,0x7C},  /* u */
+  {0x1C,0x20,0x40,0x20,0x1C},  /* v */
+  {0x44,0x28,0x10,0x28,0x44},  /* x */
+  {0x0C,0x50,0x50,0x50,0x3C},  /* y */
+};
+
+/* ============================ 私有：SSD1306 ============================ */
+/* 0x00 = 后面跟的是命令 */
+static void OLED_Cmd(uint8_t cmd)
+{
+  SoftI2C_Start();
+  SoftI2C_SendByte(OLED_I2C_ADDR);
+  SoftI2C_SendByte(0x00U);
+  SoftI2C_SendByte(cmd);
+  SoftI2C_Stop();
+}
+
+/* 0x40 = 后面跟的是显存数据 */
+static void OLED_Data(uint8_t dat)
+{
+  SoftI2C_Start();
+  SoftI2C_SendByte(OLED_I2C_ADDR);
+  SoftI2C_SendByte(0x40U);
+  SoftI2C_SendByte(dat);
+  SoftI2C_Stop();
+}
+
+/* 定位到第 page 页（0~7）、第 col 列（0~127） */
+static void OLED_SetPos(uint8_t page, uint8_t col)
+{
+  OLED_Cmd((uint8_t)(0xB0U | (page & 0x07U)));
+  OLED_Cmd((uint8_t)(0x00U | (col & 0x0FU)));
+  OLED_Cmd((uint8_t)(0x10U | ((col >> 4U) & 0x0FU)));
+}
+
+/* ============================ 公开接口 ============================ */
+void OLED_Init(void)
+{
+  SoftI2C_Init();                     /* 先把总线拉成空闲态 */
+
+  OLED_Cmd(0xAEU);                    /* 关显示 */
+  OLED_Cmd(0xA4U);                    /* 显示跟随显存（退出全亮模式） */
+  OLED_Cmd(0xA6U);                    /* 正常显示（非反色） */
+  OLED_Cmd(0x20U); OLED_Cmd(0x00U);   /* 页寻址模式 */
+
+  OLED_Cmd(0xA1U);                    /* 列地址反向（左右翻转） */
+  OLED_Cmd(0xC8U);                    /* COM 反向扫描（上下翻转） */
+
+  OLED_Cmd(0xD5U); OLED_Cmd(0x80U);   /* 时钟分频 */
+  OLED_Cmd(0xA8U); OLED_Cmd(0x3FU);   /* 复用率 1/64 */
+  OLED_Cmd(0xD3U); OLED_Cmd(0x00U);   /* 显示偏移 0 */
+  OLED_Cmd(0x40U);                    /* 起始行 0 */
+  OLED_Cmd(0x8DU); OLED_Cmd(0x14U);   /* 开电荷泵 */
+  OLED_Cmd(0xAFU);                    /* 开显示 */
+
+  OLED_Clear();
+}
+
+void OLED_Clear(void)
+{
+  for (uint8_t page = 0; page < 8U; page++)
+  {
+    OLED_SetPos(page, 0U);
+    for (uint8_t col = 0; col < 128U; col++)
+    {
+      OLED_Data(0x00U);
+    }
+  }
+}
+
+void OLED_ShowChar(uint8_t x, uint8_t page, char ch)
+{
+  const char *p = strchr(FontChars, ch);
+  uint8_t idx = (p != 0) ? (uint8_t)(p - FontChars) : 0U;   /* 不支持的字符显示空格 */
+
+  OLED_SetPos(page, x);
+  for (uint8_t i = 0; i < 5U; i++)
+  {
+    OLED_Data(Font[idx][i]);
+  }
+  OLED_Data(0x00U);                   /* 第 6 列留白，做字间距 */
+}
+
+void OLED_ShowString(uint8_t x, uint8_t page, const char *str)
+{
+  if (str == 0)
+  {
+    return;
+  }
+
+  while ((*str != '\0') && (x <= 122U))
+  {
+    OLED_ShowChar(x, page, *str);
+    x = (uint8_t)(x + 6U);
+    str++;
+  }
+}
+
+void OLED_ShowStringPad(uint8_t x, uint8_t page, const char *str, uint8_t width)
+{
+  for (uint8_t i = 0; i < width; i++)
+  {
+    char ch = ' ';
+
+    if ((str != 0) && (*str != '\0'))
+    {
+      ch = *str;
+      str++;
+    }
+
+    if ((uint8_t)(x + (i * 6U)) > 122U)
+    {
+      break;
+    }
+
+    OLED_ShowChar((uint8_t)(x + (i * 6U)), page, ch);
+  }
+}
+
+void OLED_ShowNum(uint8_t x, uint8_t page, uint32_t num, uint8_t len)
+{
+  for (uint8_t i = 0; i < len; i++)
+  {
+    uint32_t div = 1U;
+    for (uint8_t j = 0; j < (uint8_t)(len - 1U - i); j++)
+    {
+      div *= 10U;
+    }
+    OLED_ShowChar((uint8_t)(x + (i * 6U)), page, (char)('0' + (num / div) % 10U));
+  }
+}
