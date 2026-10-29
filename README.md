@@ -174,4 +174,4 @@ Lux: 85.8
 
 ## 许可
 
-仅用于课程学习。
+[MIT License](LICENSE) © 2026 YiXingNanSheng

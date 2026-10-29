@@ -1,0 +1,21 @@
+# 源码文本统一按文本处理，避免 LF/CRLF 混杂导致整文件 diff
+* text=auto
+
+*.c     text
+*.h     text
+*.s     text
+*.md    text
+*.ioc   text
+*.txt   text
+*.cmake text
+*.json  text
+*.yml   text
+
+# 二进制文件不做转换
+*.hex   binary
+*.bin   binary
+*.axf   binary
+*.a     binary
+*.lib   binary
+*.png   binary
+*.jpg   binary
